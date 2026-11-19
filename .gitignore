@@ -1,2 +1,6 @@
 node_modules
 dist
+# NetSuite keys and clinic data stay on the machine running the server.
+.env
+data/
+*.tsbuildinfo

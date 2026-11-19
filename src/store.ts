@@ -1,61 +1,59 @@
 import { useReducer } from 'react';
-import {
-  config, seedCart, seedItems, seedOrders, stockStatus,
-  type CaseLogEntry, type Item, type Order,
-} from './data';
 
-export type Screen = 'stock' | 'scan' | 'item' | 'cart' | 'incoming';
+// UI state only. Stock and orders come from the server (see App.tsx).
+
+export type Screen = 'stock' | 'use' | 'item' | 'cart' | 'incoming';
 export type StockFilter = 'all' | 'low' | 'order';
-export type ScanState = 'idle' | 'scanning' | 'found';
 
-export interface AppState {
-  items: Item[];
+export interface CaseLogEntry {
+  name: string;
+  qty: number;
+  caseRef: string;
+}
+
+export interface UiState {
   screen: Screen;
   filter: StockFilter;
   query: string;
-  activeId: string;
-  cart: Record<string, number>;
-  caseLog: CaseLogEntry[];
+  activeId: number | null;
+  /** Reorder queue: NetSuite item id → quantity. */
+  cart: Record<number, number>;
+  /** Item picked on the Log use screen. */
+  pickedId: number | null;
   useQty: number;
-  scanState: ScanState;
-  scannedId: string | null;
-  lastScannedId: string | null;
+  caseRef: string;
+  caseLog: CaseLogEntry[];
   toast: string;
-  poSeq: number;
-  orders: Order[];
 }
 
 export type Action =
   | { type: 'navigate'; screen: Screen }
-  | { type: 'openItem'; id: string }
+  | { type: 'openItem'; id: number }
   | { type: 'setFilter'; filter: StockFilter }
   | { type: 'setQuery'; query: string }
-  | { type: 'addToCart'; id: string; delta: number }
-  | { type: 'reorderAllLow' }
-  | { type: 'scanStart' }
-  | { type: 'scanFound'; id: string }
+  | { type: 'addToCart'; id: number; delta: number }
+  | { type: 'fillCart'; quantities: Record<number, number> }
+  | { type: 'clearCart' }
+  | { type: 'pick'; id: number | null }
   | { type: 'setUseQty'; delta: number }
-  | { type: 'logUse'; reorder: boolean }
-  | { type: 'submitOrder' };
+  | { type: 'setCaseRef'; caseRef: string }
+  | { type: 'logged'; entry: CaseLogEntry; toast: string }
+  | { type: 'toast'; toast: string };
 
-const initialState: AppState = {
-  items: seedItems,
+const initial: UiState = {
   screen: 'stock',
   filter: 'low',
   query: '',
-  activeId: 'p3',
-  cart: seedCart,
-  caseLog: [],
+  activeId: null,
+  cart: {},
+  pickedId: null,
   useQty: 1,
-  scanState: 'idle',
-  scannedId: null,
-  lastScannedId: null,
+  caseRef: '',
+  caseLog: [],
   toast: '',
-  poSeq: 2042,
-  orders: seedOrders,
 };
 
-function withCartDelta(cart: Record<string, number>, id: string, delta: number) {
+function withCartDelta(cart: Record<number, number>, id: number, delta: number) {
   const next = { ...cart };
   const qty = Math.max(0, (next[id] ?? 0) + delta);
   if (qty) next[id] = qty;
@@ -63,7 +61,7 @@ function withCartDelta(cart: Record<string, number>, id: string, delta: number) 
   return next;
 }
 
-function reducer(s: AppState, a: Action): AppState {
+function reducer(s: UiState, a: Action): UiState {
   switch (a.type) {
     case 'navigate':
       return { ...s, screen: a.screen };
@@ -75,60 +73,26 @@ function reducer(s: AppState, a: Action): AppState {
       return { ...s, query: a.query };
     case 'addToCart':
       return { ...s, cart: withCartDelta(s.cart, a.id, a.delta) };
-    case 'reorderAllLow': {
+    case 'fillCart': {
       const cart = { ...s.cart };
-      for (const it of s.items) {
-        const st = stockStatus(it);
-        if (st.critical) cart[it.id] = Math.max(cart[it.id] ?? 0, st.suggested);
-      }
+      for (const [id, q] of Object.entries(a.quantities)) cart[Number(id)] = Math.max(cart[Number(id)] ?? 0, q);
       return { ...s, cart, screen: 'cart' };
     }
-    case 'scanStart':
-      return { ...s, scanState: 'scanning', scannedId: null, toast: '' };
-    case 'scanFound':
-      return { ...s, scanState: 'found', scannedId: a.id, lastScannedId: a.id, useQty: 1 };
+    case 'clearCart':
+      return { ...s, cart: {} };
+    case 'pick':
+      return { ...s, pickedId: a.id, useQty: 1, toast: '' };
     case 'setUseQty':
-      return { ...s, useQty: Math.min(20, Math.max(1, s.useQty + a.delta)) };
-    case 'logUse': {
-      const it = s.items.find(i => i.id === s.scannedId);
-      if (!it) return s;
-      const q = s.useQty;
-      return {
-        ...s,
-        items: s.items.map(i => (i.id === it.id ? { ...i, onHand: Math.max(0, i.onHand - q) } : i)),
-        caseLog: [{ name: it.name, qty: q }, ...s.caseLog],
-        cart: a.reorder ? withCartDelta(s.cart, it.id, q) : s.cart,
-        scanState: 'idle',
-        scannedId: null,
-        toast: a.reorder
-          ? `✓ ${q} × ${it.name} logged to case ${config.caseId} in ezyVet · ${q} added to the reorder queue.`
-          : `✓ ${q} × ${it.name} logged to case ${config.caseId} in ezyVet. Stock not reordered.`,
-      };
-    }
-    case 'submitOrder': {
-      const ids = Object.keys(s.cart);
-      if (!ids.length) return s;
-      const order: Order = {
-        po: `PO-${s.poSeq}`,
-        placed: config.today,
-        step: 0,
-        eta: 'Aug 3 (est.)',
-        kind: 'submitted',
-        lines: ids.map(id => ({ name: s.items.find(i => i.id === id)!.name, qty: s.cart[id], state: 'queued' })),
-        note: 'Sent to Invictos · NetSuite acknowledgement usually lands within an hour.',
-      };
-      return {
-        ...s,
-        orders: [order, ...s.orders],
-        items: s.items.map(i => (s.cart[i.id] ? { ...i, onOrder: i.onOrder + s.cart[i.id] } : i)),
-        cart: {},
-        poSeq: s.poSeq + 1,
-        screen: 'incoming',
-      };
-    }
+      return { ...s, useQty: Math.min(50, Math.max(1, s.useQty + a.delta)) };
+    case 'setCaseRef':
+      return { ...s, caseRef: a.caseRef };
+    case 'logged':
+      return { ...s, caseLog: [a.entry, ...s.caseLog], pickedId: null, useQty: 1, toast: a.toast };
+    case 'toast':
+      return { ...s, toast: a.toast };
   }
 }
 
-export function useAppStore() {
-  return useReducer(reducer, initialState);
+export function useUiStore() {
+  return useReducer(reducer, initial);
 }

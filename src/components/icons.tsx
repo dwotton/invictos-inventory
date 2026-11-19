@@ -21,9 +21,12 @@ export const SearchIcon = (p: IconProps) => (
 export const BoxIcon = (p: IconProps) => (
   <Icon {...p}><path d="M3 7l9-4 9 4v10l-9 4-9-4z" /><path d="M3 7l9 4 9-4M12 11v10" /></Icon>
 );
-export const ScanIcon = (p: IconProps) => (
-  <Icon {...p}><path d="M3 8V4h4M21 8V4h-4M3 16v4h4M21 16v4h-4" /><path d="M7 12h10" /></Icon>
+export const ClipboardIcon = (p: IconProps) => (
+  <Icon {...p}><path d="M9 4h6v3H9z" /><path d="M9 5H6v16h12V5h-3" /><path d="M9 12h6M9 16h4" /></Icon>
 );
 export const TruckIcon = (p: IconProps) => (
   <Icon {...p}><path d="M2 6h11v10H2zM13 9h4l4 3v4h-8z" /><circle cx="6" cy="18" r="1.6" /><circle cx="17" cy="18" r="1.6" /></Icon>
+);
+export const SignOutIcon = (p: IconProps) => (
+  <Icon size={18} {...p}><path d="M14 4h5v16h-5" /><path d="M10 8l-4 4 4 4M6 12h10" /></Icon>
 );
