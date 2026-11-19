@@ -59,7 +59,12 @@ async function request(method: string, path: string, body?: unknown, extraHeader
       const j = await res.json() as { 'o:errorDetails'?: { detail: string }[] };
       detail = j['o:errorDetails']?.map(d => d.detail).join(' ') ?? '';
     } catch { /* not JSON */ }
-    throw new NetSuiteError('NetSuite returned ' + res.status + (detail ? ': ' + detail : ''));
+    const hint = res.status === 401
+      ? ' (NetSuite didn’t accept the keys: check the four keys and the account id in .env.)'
+      : /permission/i.test(detail)
+        ? ' (The NetSuite role used by the clinic app is missing a permission.)'
+        : '';
+    throw new NetSuiteError('NetSuite returned ' + res.status + (detail ? ': ' + detail : '') + hint);
   }
   return res;
 }
@@ -101,8 +106,15 @@ const ITEM_TYPES = "('InvtPart', 'Kit', 'Assembly', 'NonInvtPart')";
 
 export const liveGateway: NetSuiteGateway = {
   async getCustomer(id) {
-    const [r] = await suiteql(
-      'SELECT id, companyname, BUILTIN.DF(terms) AS terms, BUILTIN.DF(pricelevel) AS pricelevel FROM customer WHERE id = ' + int(id));
+    let r: Row | undefined;
+    try {
+      [r] = await suiteql(
+        'SELECT id, companyname, BUILTIN.DF(terms) AS terms, BUILTIN.DF(pricelevel) AS pricelevel FROM customer WHERE id = ' + int(id));
+    } catch (e) {
+      // Terms and price levels need their own permissions; fall back to just the name.
+      if (!(e instanceof NetSuiteError) || !/permission/i.test(e.message)) throw e;
+      [r] = await suiteql('SELECT id, companyname FROM customer WHERE id = ' + int(id));
+    }
     return r ? { id: Number(r.id), name: String(r.companyname), terms: str(r.terms), priceLevel: str(r.pricelevel) } : null;
   },
 
